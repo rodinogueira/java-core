@@ -1,8 +1,8 @@
 import java.util.List;
 
-public interface Repository {
-    void save(Point point);
+public interface Repository<T> {
+    void save(T entity);
+    List<T> findAll();
+    void update(T entity);
     void deleteById(int id);
-    List<Point> findAll();
-    void update(Point point);
 }

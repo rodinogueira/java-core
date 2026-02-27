@@ -2,10 +2,30 @@ import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 
-public class SqliteRepository implements Repository {
+public class SqliteRepository<T> implements Repository<T> {
     private static final String DB_URL = "jdbc:sqlite:deaddrop.db";
 
-    public SqliteRepository() {
+    // O segredo: uma interface interna para mapear os dados
+    public interface EntityMapper<T> {
+        void mapToSave(PreparedStatement pstmt, T entity) throws SQLException;
+
+        void mapToUpdate(PreparedStatement pstmt, T entity) throws SQLException;
+
+        T mapFromResultSet(ResultSet rs) throws SQLException;
+
+        int getEntityId(T entity);
+
+        String getEntityName(T entity);
+    }
+
+    private final EntityMapper<T> mapper;
+    private final String tableName;
+
+    public SqliteRepository(String tableName, EntityMapper<T> mapper) {
+
+        this.tableName = tableName;
+        this.mapper = mapper;
+
         try {
             Class.forName("org.sqlite.JDBC");
             try (Connection conn = DriverManager.getConnection(DB_URL)) {
@@ -17,8 +37,7 @@ public class SqliteRepository implements Repository {
                         "    level INTEGER\n" +
                         ")");
 
-
-                        // 2. Tabela de Auditoria (Os Rastros) - O NOVO BLOCO AQUI:
+                // 2. Tabela de Auditoria (Os Rastros) - O NOVO BLOCO AQUI:
                 stmt.execute("CREATE TABLE IF NOT EXISTS audit_logs (\n" +
                         "    id INTEGER PRIMARY KEY AUTOINCREMENT,\n" +
                         "    operation TEXT,\n" +
@@ -32,125 +51,110 @@ public class SqliteRepository implements Repository {
     }
 
     @Override
-    public void save(Point point) {
-        // Especificamos as colunas para não sobrar '?' vazio
-        String sql = "INSERT INTO points (id, name, level) VALUES (?, ?, ?)";
+    public void save(T entity) {
+        String sql = "INSERT INTO " + tableName + " (name, level) VALUES (?, ?)";
 
+        // ADICIONADO: Statement.RETURN_GENERATED_KEYS é obrigatório aqui!
         try (Connection conn = DriverManager.getConnection(DB_URL);
-                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
 
-            pstmt.setString(2, point.getCodename()); // Name é o 2º ?
-            pstmt.setInt(3, point.getDangerLevel()); // Level é o 3º ?
-
+            mapper.mapToSave(pstmt, entity);
             pstmt.executeUpdate();
-            // 3. Pegamos o ID que o banco acabou de criar
+
             try (ResultSet rs = pstmt.getGeneratedKeys()) {
                 if (rs.next()) {
                     int generatedId = rs.getInt(1);
-                    System.out.println("[+] File hardened: " + point.getCodename() + " (ID: " + generatedId + ")");
-                    
-                    // 4. Agora o rastro no Log tem o ID real do banco!
+                    System.out.println("[+] Record hardened in " + tableName + " (ID: " + generatedId + ")");
                     logOperation("INSERT", generatedId);
                 }
-            }       
-        } catch (SQLException e) {
-            System.out.println("[+] File hardened: " + point.getCodename() + " implantado.");
-            System.err.println("[!] Falha no save: " + e.getMessage());
-        }
-    }
-
-    public List<Point> findAll() {
-
-        List<Point> points = new ArrayList<>();
-
-        String sql = "SELECT id, name, level FROM points";
-
-        try (Connection conn = DriverManager.getConnection(DB_URL);
-
-                Statement stmt = conn.createStatement();
-
-                ResultSet rs = stmt.executeQuery(sql)) {
-
-            while (rs.next()) {
-
-                points.add(new Point(rs.getInt("id"), rs.getString("name"), rs.getInt("level")));
-
             }
-
         } catch (SQLException e) {
-
-            System.err.println("Erro na leitura: " + e.getMessage());
-
-        }
-
-        return points;
-
-    }
-
-    // 2. DELETE (Apagar os rastros)
-
-    public void deleteById(int id) {
-
-        String sql = "DELETE FROM points WHERE id = ?";
-
-        try (Connection conn = DriverManager.getConnection(DB_URL);
-
-                PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
-            pstmt.setInt(1, id);
-
-            int affected = pstmt.executeUpdate();
-            
-            if (affected > 0) {
-                // Não precisa de GeneratedKeys! O ID você já recebeu lá em cima.
-                logOperation("DELETE", id);
-                System.out.println("[-] Target eliminated: " + id);
-            } else {
-                System.out.println("[?] Target not found for elimination: " + id);
-            }
-
-        } catch (SQLException e) {
-
-            System.err.println("Erro ao deletar: " + e.getMessage());
-
+            System.err.println("[!] Falha no save em " + tableName + ": " + e.getMessage());
         }
     }
 
     @Override
-    public void update(Point point) {
-        // O SQL precisa de todos os campos que você quer mudar
-        String sql = "UPDATE points SET name = ?, level = ? WHERE id = ?";
+    public List<T> findAll() {
+        List<T> entities = new ArrayList<>();
+        // Usamos a variável tableName para ser universal
+        String sql = "SELECT * FROM " + tableName;
+
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(sql)) {
+
+            while (rs.next()) {
+                // O Mapper faz a mágica: ele conhece a classe real (Point, Agent, etc.)
+                entities.add(mapper.mapFromResultSet(rs));
+            }
+
+        } catch (SQLException e) {
+            System.err.println("[!] Erro na leitura de " + tableName + ": " + e.getMessage());
+        }
+
+        return entities;
+    }
+
+    // 2. DELETE (Apagar os rastros)
+
+    @Override
+    public void deleteById(int id) {
+        // CORRIGIDO: Agora usa o tableName para ser genérico de verdade
+        String sql = "DELETE FROM " + tableName + " WHERE id = ?";
 
         try (Connection conn = DriverManager.getConnection(DB_URL);
                 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-            pstmt.setString(1, point.getCodename()); // Primeiro '?'
-            pstmt.setInt(2, point.getDangerLevel()); // Segundo '?'
-            pstmt.setInt(3, point.getId()); // O 'WHERE id = ?'
+            pstmt.setInt(1, id);
+            int affected = pstmt.executeUpdate();
+
+            if (affected > 0) {
+                logOperation("DELETE", id);
+                System.out.println("[-] Target eliminated from " + tableName + ": " + id);
+            } else {
+                System.out.println("[?] Target " + id + " not found in " + tableName);
+            }
+        } catch (SQLException e) {
+            System.err.println("[!] Erto ao deletar em " + tableName + ": " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void update(T entity) {
+        // 1. ADICIONE ESPAÇOS: "UPDATE " + tableName + " SET ..."
+        String sql = "UPDATE " + tableName + " SET name = ?, level = ? WHERE id = ?";
+
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            // 2. O Mapper preenche os 3 parâmetros: Name, Level e o ID para o WHERE
+            mapper.mapToUpdate(pstmt, entity);
 
             int affected = pstmt.executeUpdate();
 
             if (affected > 0) {
-                logOperation("UPDATE", point.getId());
-                System.out.println("[#] Registro ID " + point.getId() + " atualizado para: " + point.getCodename());
+                // Pegamos as informações através do mapper para o Log
+                int id = mapper.getEntityId(entity);
+                logOperation("UPDATE", id);
+                System.out.println("[#] [" + tableName + "] ID " + id + " atualizado com sucesso.");
             } else {
-                System.out.println("[?] ID " + point.getId() + " não encontrado para update.");
+                System.out.println("[?] ID " + mapper.getEntityId(entity) + " não encontrado em " + tableName);
             }
         } catch (SQLException e) {
-            System.err.println("[!] Erro na reescrita: " + e.getMessage());
+            System.err.println("[!] Erro na reescrita em " + tableName + ": " + e.getMessage());
         }
     }
 
     private void logOperation(String operation, int targetId) {
         String sql = "INSERT INTO audit_logs (operation, target_id) VALUES (?, ?)";
-        
+
         try (Connection conn = DriverManager.getConnection(DB_URL);
-            PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            
+                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
             pstmt.setString(1, operation);
             pstmt.setInt(2, targetId);
             pstmt.executeUpdate();
-            
+
         } catch (SQLException e) {
             // No hacking corporativo, se o log falha, a gente avisa, mas não para a missão
             System.err.println("[!] Audit Failure: " + e.getMessage());
