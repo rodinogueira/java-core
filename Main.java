@@ -4,6 +4,11 @@ import java.sql.SQLException;
 
 public class Main {
     public static void main(String[] args) {
+        // 1. RODAR OS TESTES PRIMEIRO (A ARMADURA)
+        SqliteRepositoryTest.runTests(); 
+
+        System.out.println("\n--- INICIANDO OPERAÇÃO REAL ---");
+        
         // 1. O "Tradutor" - Define como o Point vira SQL e vice-versa
         // 1. O "Tradutor" com todas as cláusulas assinadas
         SqliteRepository.EntityMapper<Point> pointMapper = new SqliteRepository.EntityMapper<Point>() {
