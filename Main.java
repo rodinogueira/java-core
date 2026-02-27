@@ -7,9 +7,9 @@ public class Main {
         MissionControl control = new MissionControl(db);
 
         // 3. Create a New Target (The Point)
-        Point alpha = new Point(1, "Station", 4);
+        Point alpha = new Point(1, "Omega", 3);
 
         // 4. Execute the operation
-        control.update(alpha);
+        control.deploy(alpha);
     }
 }
