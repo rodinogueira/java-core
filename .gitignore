@@ -1,0 +1,17 @@
+# Compilados (O lixo da compilação)
+*.class
+
+# Banco de dados local (Dados sensíveis/voláteis)
+*.db
+
+# Bibliotecas (Deixe o Maven/pom.xml cuidar disso)
+*.jar
+
+# Diretórios de saída
+target/
+bin/
+
+# Configurações de IDE (Caso você use VS Code ou IntelliJ)
+.vscode/
+.idea/
+*.iml
